@@ -30,6 +30,7 @@ export type UploadFileItem = {
   uploaded_by: string;
   role: string;
   status: string;
+  summary?: Summary;
 };
 
 export async function fetchSummary(uploadId?: number): Promise<Summary> {

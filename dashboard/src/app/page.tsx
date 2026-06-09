@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, Line, LineChart, XAxis, YAxis, CartesianGrid } from "recharts";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Bar, BarChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AlertTriangle, FileUp, Shield, Search, ClipboardCheck, Clock, FileSpreadsheet } from "lucide-react";
 import { fetchSummary, fetchTransactions, fetchUploads, markReviewed, updateNote, uploadCsv, type TransactionItem, type UploadFileItem } from "@/lib/api";
 import { RiskBadge } from "@/components/RiskBadge";
@@ -12,32 +12,36 @@ export default function Home() {
   const [selectedUpload, setSelectedUpload] = useState<{ id: number; filename: string } | null>(null);
   const [isUploadCycle, setIsUploadCycle] = useState(false);
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({
-    upload: false,
     kpi: false,
     charts: false,
     table: false,
     history: false,
   });
 
-  const isAnyLoading = Object.values(loadingMap).some(Boolean);
+  const isAnyPending = Object.values(loadingMap).some((v) => !v);
+  const handleKpiLoading = useCallback((loaded: boolean) => setLoadingMap((m) => ({ ...m, kpi: loaded })), []);
+  const handleChartsLoading = useCallback((loaded: boolean) => setLoadingMap((m) => ({ ...m, charts: loaded })), []);
+  const handleTableLoading = useCallback((loaded: boolean) => setLoadingMap((m) => ({ ...m, table: loaded })), []);
+  const handleHistoryLoading = useCallback((loaded: boolean) => setLoadingMap((m) => ({ ...m, history: loaded })), []);
+
   // Auto-close upload cycle when all panels finish loading
   useEffect(() => {
-    if (isUploadCycle && !isAnyLoading) {
-      setIsUploadCycle(false);
+    if (isUploadCycle && !isAnyPending) {
+      Promise.resolve().then(() => setIsUploadCycle(false));
     }
-  }, [isUploadCycle, isAnyLoading]);
+  }, [isUploadCycle, isAnyPending]);
 
   // Compute loading progress (0..1) based on panels in `loadingMap`.
   const progress = useMemo(() => {
     const vals = Object.values(loadingMap);
     const total = vals.length;
-    const done = vals.filter((v) => v === false).length;
+    const done = vals.filter(Boolean).length;
     return total ? done / total : 1;
   }, [loadingMap]);
 
   return (
     <div className="min-h-full bg-[#070A12] text-zinc-100 relative">
-      <LoadingScreen active={isUploadCycle && isAnyLoading} progress={progress} />
+      <LoadingScreen active={isUploadCycle && isAnyPending} progress={progress} />
 
       <div className="mx-auto max-w-7xl px-6 py-10">
         <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -55,9 +59,13 @@ export default function Home() {
             <UploadPanel 
               onStart={() => {
                 setIsUploadCycle(true);
-                setLoadingMap({ upload: true, kpi: true, charts: true, table: true, history: true });
+                setLoadingMap({ kpi: false, charts: false, table: false, history: false });
               }}
-              onEnd={() => setLoadingMap(m => ({ ...m, upload: false }))}
+              onEnd={(success) => {
+                if (!success) {
+                  setIsUploadCycle(false);
+                }
+              }}
             />
           </div>
         </header>
@@ -85,24 +93,24 @@ export default function Home() {
 
           <KpiRow 
             uploadId={selectedUpload?.id} 
-            onLoading={(l) => setLoadingMap(m => ({ ...m, kpi: l }))}
+            onLoading={handleKpiLoading}
           />
           <ChartsRow 
             uploadId={selectedUpload?.id} 
-            onLoading={(l) => setLoadingMap(m => ({ ...m, charts: l }))}
+            onLoading={handleChartsLoading}
           />
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 items-start">
             <div className="lg:col-span-2">
               <SuspiciousTable 
                 uploadId={selectedUpload?.id} 
-                onLoading={(l) => setLoadingMap(m => ({ ...m, table: l }))}
+                onLoading={handleTableLoading}
               />
             </div>
             <div className="lg:col-span-1">
               <FileHistory 
                 selectedId={selectedUpload?.id}
                 onSelect={setSelectedUpload}
-                onLoading={(l) => setLoadingMap(m => ({ ...m, history: l }))}
+                onLoading={handleHistoryLoading}
               />
             </div>
           </div>
@@ -142,20 +150,20 @@ function Card({
 }
 
 function RoleSwitcher() {
-  const [role, setRole] = useState<"Analyst" | "Auditor">("Analyst");
+  const [role, setRole] = useState<"Analyst" | "Auditor">(() => {
+    if (typeof window === "undefined") return "Analyst";
+    const saved = window.localStorage.getItem("fraudshield_role");
+    return saved === "Auditor" ? "Auditor" : "Analyst";
+  });
   useEffect(() => {
     window.localStorage.setItem("fraudshield_role", role);
   }, [role]);
-  useEffect(() => {
-    const saved = window.localStorage.getItem("fraudshield_role");
-    if (saved === "Auditor" || saved === "Analyst") setRole(saved);
-  }, []);
   return (
     <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-2">
       <span className="px-2 text-xs font-semibold text-zinc-300">Role</span>
       <select
         value={role}
-        onChange={(e) => setRole(e.target.value as any)}
+        onChange={(e) => setRole(e.target.value === "Auditor" ? "Auditor" : "Analyst")}
         className="rounded-xl bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-white/10"
       >
         <option>Analyst</option>
@@ -165,7 +173,7 @@ function RoleSwitcher() {
   );
 }
 
-function UploadPanel({ onStart, onEnd }: { onStart: () => void; onEnd: () => void }) {
+function UploadPanel({ onStart, onEnd }: { onStart: () => void; onEnd: (success: boolean) => void }) {
   const [busy, setBusy] = useState(false);
   const [insights, setInsights] = useState<string[]>([]);
 
@@ -177,19 +185,22 @@ function UploadPanel({ onStart, onEnd }: { onStart: () => void; onEnd: () => voi
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOADING_TIMEOUT);
-    
+    let success = false;
+
     try {
-      const role = (window.localStorage.getItem("fraudshield_role") as any) || "Analyst";
+      const storedRole = window.localStorage.getItem("fraudshield_role");
+      const role = storedRole === "Auditor" ? "Auditor" : "Analyst";
       const res = await uploadCsv(f, role);
       setInsights(res.insights ?? []);
       window.dispatchEvent(new Event("fraudshield_refresh"));
+      success = true;
     } catch (err) {
       console.error("Upload failed", err);
       setInsights([]);
     } finally {
       clearTimeout(timeoutId);
       setBusy(false);
-      onEnd();
+      onEnd(success);
     }
   }
 
@@ -224,10 +235,15 @@ function UploadPanel({ onStart, onEnd }: { onStart: () => void; onEnd: () => voi
 }
 
 function KpiRow({ uploadId, onLoading }: { uploadId?: number | null; onLoading: (l: boolean) => void }) {
-  const [kpi, setKpi] = useState<any>(null);
+  const [kpi, setKpi] = useState<{
+    total_transactions?: number;
+    total_fraud_detected?: number;
+    fraud_detection_rate?: number;
+    estimated_prevented_losses?: number;
+  } | null>(null);
 
-  const load = async () => {
-    onLoading(true);
+  const load = useCallback(async () => {
+    onLoading(false);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOADING_TIMEOUT);
     
@@ -239,16 +255,18 @@ function KpiRow({ uploadId, onLoading }: { uploadId?: number | null; onLoading: 
       setKpi(null);
     } finally {
       clearTimeout(timeoutId);
-      onLoading(false);
+      onLoading(true);
     }
-  };
+  }, [onLoading, uploadId]);
 
   useEffect(() => {
-    load();
-    const h = () => load();
+    const h = () => {
+      void load();
+    };
     window.addEventListener("fraudshield_refresh", h);
+    Promise.resolve().then(() => load());
     return () => window.removeEventListener("fraudshield_refresh", h);
-  }, [uploadId]);
+  }, [load]);
 
   const fmtMoney = (n: number) =>
     n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -263,12 +281,12 @@ function KpiRow({ uploadId, onLoading }: { uploadId?: number | null; onLoading: 
       />
       <Card
         title="Fraud Detection Rate"
-        value={kpi ? `${(kpi.fraud_detection_rate * 100).toFixed(2)}%` : "—"}
+        value={kpi?.fraud_detection_rate != null ? `${(kpi.fraud_detection_rate * 100).toFixed(2)}%` : "—"}
         icon={<ClipboardCheck className="h-5 w-5" />}
       />
       <Card
         title="Estimated Prevented Losses"
-        value={kpi ? fmtMoney(kpi.estimated_prevented_losses) : "—"}
+        value={kpi?.estimated_prevented_losses != null ? fmtMoney(kpi.estimated_prevented_losses) : "—"}
         sub="Proxy: sum(high risk amount) × 0.9"
         icon={<Shield className="h-5 w-5" />}
       />
@@ -279,8 +297,8 @@ function KpiRow({ uploadId, onLoading }: { uploadId?: number | null; onLoading: 
 function ChartsRow({ uploadId, onLoading }: { uploadId?: number | null; onLoading: (l: boolean) => void }) {
   const [items, setItems] = useState<TransactionItem[]>([]);
 
-  const load = async () => {
-    onLoading(true);
+  const load = useCallback(async () => {
+    onLoading(false);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOADING_TIMEOUT);
     
@@ -292,16 +310,18 @@ function ChartsRow({ uploadId, onLoading }: { uploadId?: number | null; onLoadin
       setItems([]);
     } finally {
       clearTimeout(timeoutId);
-      onLoading(false);
+      onLoading(true);
     }
-  };
+  }, [onLoading, uploadId]);
 
   useEffect(() => {
-    load();
-    const h = () => load();
+    const h = () => {
+      void load();
+    };
     window.addEventListener("fraudshield_refresh", h);
+    Promise.resolve().then(() => load());
     return () => window.removeEventListener("fraudshield_refresh", h);
-  }, [uploadId]);
+  }, [load]);
 
   const riskData = useMemo(() => {
     const c = { "Low Risk": 0, "Medium Risk": 0, "High Risk": 0 } as Record<string, number>;
@@ -332,8 +352,8 @@ function ChartsRow({ uploadId, onLoading }: { uploadId?: number | null; onLoadin
     <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
       <div className="rounded-2xl border border-white/10 bg-white/5 p-5 lg:col-span-2">
         <div className="text-sm font-semibold">Fraud Trend (Cumulative)</div>
-        <div className="mt-4 w-full" style={{ height: '256px' }}>
-          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <div className="mt-4 w-full" style={{ height: '256px', minHeight: 256 }}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
             <LineChart data={trend}>
               <CartesianGrid stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="x" stroke="rgba(255,255,255,0.45)" tick={{ fontSize: 12 }} />
@@ -349,8 +369,8 @@ function ChartsRow({ uploadId, onLoading }: { uploadId?: number | null; onLoadin
 
       <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
         <div className="text-sm font-semibold">Risk Distribution</div>
-        <div className="mt-4 w-full" style={{ height: '256px' }}>
-          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <div className="mt-4 w-full" style={{ height: '256px', minHeight: 256 }}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
             <PieChart>
               <RTooltip contentStyle={{ background: "#0b1020", border: "1px solid rgba(255,255,255,0.12)" }} />
               <Pie
@@ -379,9 +399,9 @@ function SuspiciousTable({ uploadId, onLoading }: { uploadId?: number | null; on
   const [expanded, setExpanded] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<number, string>>({});
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    onLoading(true);
+    onLoading(false);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOADING_TIMEOUT);
     
@@ -400,26 +420,29 @@ function SuspiciousTable({ uploadId, onLoading }: { uploadId?: number | null; on
     } finally {
       clearTimeout(timeoutId);
       setLoading(false);
-      onLoading(false);
+      onLoading(true);
     }
-  };
+  }, [q, risk, uploadId, onLoading]);
 
   useEffect(() => {
-    load();
-    const h = () => load();
+    const h = () => {
+      void load();
+    };
     window.addEventListener("fraudshield_refresh", h);
+    Promise.resolve().then(() => load());
     return () => window.removeEventListener("fraudshield_refresh", h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uploadId]);
+  }, [load]);
 
   async function onReview(t: TransactionItem, status: TransactionItem["investigation_status"]) {
-    const role = (window.localStorage.getItem("fraudshield_role") as any) || "Auditor";
+    const storedRole = window.localStorage.getItem("fraudshield_role");
+    const role = storedRole === "Analyst" ? "Analyst" : "Auditor";
     await markReviewed({ id: t.id, reviewed: true, status, role });
     window.dispatchEvent(new Event("fraudshield_refresh"));
   }
 
   async function onSaveNote(t: TransactionItem) {
-    const role = (window.localStorage.getItem("fraudshield_role") as any) || "Auditor";
+    const storedRole = window.localStorage.getItem("fraudshield_role");
+    const role = storedRole === "Analyst" ? "Analyst" : "Auditor";
     await updateNote({ id: t.id, note: noteDraft[t.id] ?? t.notes ?? "", role });
     window.dispatchEvent(new Event("fraudshield_refresh"));
   }
@@ -474,79 +497,83 @@ function SuspiciousTable({ uploadId, onLoading }: { uploadId?: number | null; on
           </thead>
           <tbody className="align-top">
             {items.map((t) => (
-              <tr key={t.id} className="border-b border-white/5 hover:bg-white/5">
-                <td className="py-3 pr-4">
-                  <button
-                    onClick={() => setExpanded(expanded === t.id ? null : t.id)}
-                    className="font-mono text-xs text-sky-200 hover:underline"
-                  >
-                    {t.transaction_id}
-                  </button>
-                </td>
-                <td className="py-3 pr-4 tabular-nums text-zinc-200">{(t.amount ?? 0).toFixed(2)}</td>
-                <td className="py-3 pr-4 tabular-nums">
-                  <span className="font-semibold text-zinc-100">{(t.fraud_probability * 100).toFixed(2)}%</span>
-                </td>
-                <td className="py-3 pr-4">
-                  <RiskBadge level={t.risk_level} />
-                </td>
-                <td className="py-3 pr-4">
-                  <span className="text-xs font-semibold text-zinc-200">{t.investigation_status}</span>
-                  {t.reviewed ? <span className="ml-2 text-xs text-emerald-300/90">Reviewed</span> : null}
-                </td>
-                <td className="py-3 pr-4">
-                  <div className="flex flex-wrap gap-2">
+              <Fragment key={t.id}>
+                <tr className="border-b border-white/5 hover:bg-white/5">
+                  <td className="py-3 pr-4">
                     <button
-                      onClick={() => onReview(t, "Under Review")}
-                      className="rounded-lg bg-white/5 px-2.5 py-1.5 text-xs font-semibold ring-1 ring-white/10 hover:bg-white/10"
+                      onClick={() => setExpanded(expanded === t.id ? null : t.id)}
+                      className="font-mono text-xs text-sky-200 hover:underline"
                     >
-                      Mark Under Review
+                      {t.transaction_id}
                     </button>
-                    <button
-                      onClick={() => onReview(t, "Resolved")}
-                      className="rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-500/25 hover:bg-emerald-500/15"
-                    >
-                      Resolve
-                    </button>
-                  </div>
-                </td>
-                {expanded === t.id ? (
-                  <td colSpan={6} className="pb-4">
-                    <div className="mt-3 grid grid-cols-1 gap-4 rounded-xl border border-white/10 bg-black/20 p-4 md:grid-cols-2">
-                      <div>
-                        <div className="text-xs font-semibold tracking-wide text-zinc-300">
-                          Why This Transaction Was Flagged
-                        </div>
-                        <ul className="mt-2 space-y-1 text-sm text-zinc-200">
-                          {(t.why_flagged ?? []).map((r, i) => (
-                            <li key={i} className="flex gap-2">
-                              <span className="mt-1 h-1.5 w-1.5 rounded-full bg-amber-300/80" />
-                              <span>{r}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold tracking-wide text-zinc-300">Investigation Notes</div>
-                        <textarea
-                          value={noteDraft[t.id] ?? t.notes ?? ""}
-                          onChange={(e) => setNoteDraft((s) => ({ ...s, [t.id]: e.target.value }))}
-                          placeholder="Add investigator note / justification / evidence..."
-                          className="mt-2 h-24 w-full resize-none rounded-xl bg-black/30 p-3 text-sm outline-none ring-1 ring-white/10 focus:ring-sky-500/40"
-                        />
-                        <div className="mt-2 flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => onSaveNote(t)}
-                            className="rounded-xl bg-sky-500/20 px-3 py-2 text-xs font-semibold text-sky-100 ring-1 ring-sky-500/30 hover:bg-sky-500/25"
-                          >
-                            Save Note
-                          </button>
-                        </div>
-                      </div>
+                  </td>
+                  <td className="py-3 pr-4 tabular-nums text-zinc-200">{(t.amount ?? 0).toFixed(2)}</td>
+                  <td className="py-3 pr-4 tabular-nums">
+                    <span className="font-semibold text-zinc-100">{(t.fraud_probability * 100).toFixed(2)}%</span>
+                  </td>
+                  <td className="py-3 pr-4">
+                    <RiskBadge level={t.risk_level} />
+                  </td>
+                  <td className="py-3 pr-4">
+                    <span className="text-xs font-semibold text-zinc-200">{t.investigation_status}</span>
+                    {t.reviewed ? <span className="ml-2 text-xs text-emerald-300/90">Reviewed</span> : null}
+                  </td>
+                  <td className="py-3 pr-4">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => onReview(t, "Under Review")}
+                        className="rounded-lg bg-white/5 px-2.5 py-1.5 text-xs font-semibold ring-1 ring-white/10 hover:bg-white/10"
+                      >
+                        Mark Under Review
+                      </button>
+                      <button
+                        onClick={() => onReview(t, "Resolved")}
+                        className="rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-500/25 hover:bg-emerald-500/15"
+                      >
+                        Resolve
+                      </button>
                     </div>
                   </td>
+                </tr>
+                {expanded === t.id ? (
+                  <tr key={`${t.id}-expanded`} className="bg-white/5">
+                    <td colSpan={6} className="pb-4">
+                      <div className="mt-3 grid grid-cols-1 gap-4 rounded-xl border border-white/10 bg-black/20 p-4">
+                        <div>
+                          <div className="text-xs font-semibold tracking-wide text-zinc-300">
+                            Why This Transaction Was Flagged
+                          </div>
+                          <ul className="mt-2 space-y-1 text-sm text-zinc-200">
+                            {(t.why_flagged ?? []).map((r, i) => (
+                              <li key={i} className="flex gap-2">
+                                <span className="mt-1 h-1.5 w-1.5 rounded-full bg-amber-300/80" />
+                                <span>{r}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold tracking-wide text-zinc-300">Investigation Notes</div>
+                          <textarea
+                            value={noteDraft[t.id] ?? t.notes ?? ""}
+                            onChange={(e) => setNoteDraft((s) => ({ ...s, [t.id]: e.target.value }))}
+                            placeholder="Add investigator note / justification / evidence..."
+                            className="mt-2 h-24 w-full resize-none rounded-xl bg-black/30 p-3 text-sm outline-none ring-1 ring-white/10 focus:ring-sky-500/40"
+                          />
+                          <div className="mt-2 flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => onSaveNote(t)}
+                              className="rounded-xl bg-sky-500/20 px-3 py-2 text-xs font-semibold text-sky-100 ring-1 ring-sky-500/30 hover:bg-sky-500/25"
+                            >
+                              Save Note
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
                 ) : null}
-              </tr>
+              </Fragment>
             ))}
             {!items.length ? (
               <tr>
@@ -574,31 +601,43 @@ function FileHistory({
   const [uploads, setUploads] = useState<UploadFileItem[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    onLoading(true);
+    onLoading(false);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOADING_TIMEOUT);
     
     try {
       const data = await fetchUploads();
-      setUploads(data);
+      const uploadsWithSummary = await Promise.all(
+        data.map(async (item) => {
+          try {
+            const summary = await fetchSummary(item.id);
+            return { ...item, summary };
+          } catch {
+            return item;
+          }
+        })
+      );
+      setUploads(uploadsWithSummary);
     } catch (err) {
       console.error("Failed to fetch uploads history", err);
       setUploads([]);
     } finally {
       clearTimeout(timeoutId);
       setLoading(false);
-      onLoading(false);
+      onLoading(true);
     }
-  };
+  }, [onLoading]);
 
   useEffect(() => {
-    load();
-    const h = () => load();
+    const h = () => {
+      void load();
+    };
     window.addEventListener("fraudshield_refresh", h);
+    Promise.resolve().then(() => load());
     return () => window.removeEventListener("fraudshield_refresh", h);
-  }, []);
+  }, [load]);
 
   const formatSize = (bytes: number) => {
     if (bytes === 0) return "0 Bytes";
@@ -641,7 +680,36 @@ function FileHistory({
             Belum ada riwayat analisis. Silakan unggah file CSV.
           </div>
         ) : (
-          uploads.map((item) => {
+          <>
+            {uploads.some((item) => item.summary != null) ? (
+              <div className="rounded-2xl border border-white/10 bg-black/10 p-3">
+                <div className="mb-3 flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-semibold text-zinc-200">Riwayat Upload</div>
+                    <div className="text-[10px] text-zinc-400">Grafik total transaksi per berkas.</div>
+                  </div>
+                  <div className="text-[10px] text-zinc-400">Latest {Math.min(8, uploads.length)} uploads</div>
+                </div>
+                <div className="h-28">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <BarChart
+                      data={uploads.map((item) => ({
+                        name: new Date(item.uploaded_at).toLocaleDateString("id-ID", { day: "2-digit", month: "short" }),
+                        total: item.summary?.total_transactions ?? 0,
+                        fraud: item.summary?.total_fraud_detected ?? 0,
+                      }))}
+                    >
+                      <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                      <XAxis dataKey="name" stroke="rgba(255,255,255,0.45)" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="rgba(255,255,255,0.45)" tick={{ fontSize: 10 }} />
+                      <RTooltip contentStyle={{ background: "#0b1020", border: "1px solid rgba(255,255,255,0.12)" }} />
+                      <Bar dataKey="total" fill="#38bdf8" radius={[4,4,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : null}
+            {uploads.map((item) => {
             const isSelected = selectedId === item.id;
             return (
               <div
@@ -706,10 +774,35 @@ function FileHistory({
                     </span>
                   </div>
                 </div>
+                {item.summary ? (
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                      <span>Risk distribution</span>
+                      <span>
+                        {item.summary.total_fraud_detected} high • {item.summary.total_medium_risk} medium • {Math.max(0, (item.summary.total_transactions ?? 0) - (item.summary.total_fraud_detected ?? 0) - (item.summary.total_medium_risk ?? 0))} low
+                      </span>
+                    </div>
+                    <div className="flex h-2 overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className="h-full bg-red-400"
+                        style={{ width: `${item.summary.total_transactions ? ((item.summary.total_fraud_detected / item.summary.total_transactions) * 100) : 0}%` }}
+                      />
+                      <div
+                        className="h-full bg-amber-400"
+                        style={{ width: `${item.summary.total_transactions ? ((item.summary.total_medium_risk / item.summary.total_transactions) * 100) : 0}%` }}
+                      />
+                      <div
+                        className="h-full bg-sky-400"
+                        style={{ width: `${item.summary.total_transactions ? (((item.summary.total_transactions - item.summary.total_fraud_detected - item.summary.total_medium_risk) / item.summary.total_transactions) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             );
-          })
-        )}
+          })}
+        </>
+      )}
       </div>
     </section>
   );
