@@ -1,4 +1,4 @@
-<![CDATA[<div align="center">
+<div align="center">
 
 # 🛡️ FraudShield Analytics
 
@@ -114,7 +114,7 @@ The platform enables analysts and auditors to:
 ## 🛠 Tech Stack
 
 | Layer | Technology |
-|-------|------------|
+|:------|:-----------|
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS v4 |
 | **Charts** | Recharts |
 | **Icons** | Lucide React |
@@ -131,6 +131,7 @@ The platform enables analysts and auditors to:
 
 ```
 fraud-audit-system/
+│
 ├── backend/                    # FastAPI REST API
 │   └── app/
 │       ├── main.py             # API endpoints (upload, summary, transactions, activity)
@@ -204,7 +205,7 @@ Download `creditcard.csv` from [Kaggle](https://www.kaggle.com/datasets/mlg-ulb/
 data/creditcard.csv
 ```
 
-### 4. Train the ML Model (Optional — standalone pipeline)
+### 4. Train the ML Model (Optional)
 
 ```bash
 cd src
@@ -248,7 +249,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ## 📡 API Reference
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
+|:-------|:---------|:------------|
 | `GET` | `/api/health` | Health check |
 | `POST` | `/api/upload` | Upload and score a transaction CSV |
 | `GET` | `/api/summary` | Fraud detection summary statistics |
@@ -263,6 +264,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ## 🧠 Machine Learning Pipeline
 
 ### Dataset
+
 - **Source:** [Kaggle Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)
 - **Size:** 284,807 transactions, 492 fraudulent (0.172%)
 - **Features:** V1–V28 (PCA-transformed), Time, Amount
@@ -306,4 +308,3 @@ The system is designed with Indonesian financial regulations in mind:
 **Built with ❤️ for financial security and regulatory compliance**
 
 </div>
-]]>
