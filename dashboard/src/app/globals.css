@@ -1,26 +1,55 @@
-@import "tailwindcss";
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Console (by request) · colorway: paper-light
+ * nav: top-bar · signature: audit-workbench · states: loading, empty, error, full · console: paper-light
+ * axes: light/grotesk-sans/chromatic-amber · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · weakest: H, high-density audit controls kept calm on crisp paper surfaces */
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@import "tailwindcss";
+@import "./tokens.css";
+@import "./base.css";
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-paper: oklch(98.5% 0.003 245);
+  --color-paper-2: oklch(100% 0 0);
+  --color-paper-3: oklch(96.2% 0.005 245);
+  --color-ink: oklch(18% 0.015 250);
+  --color-ink-2: oklch(36% 0.02 250);
+  --color-muted: oklch(52% 0.02 250);
+  --color-rule: oklch(90% 0.008 250);
+  --color-rule-2: oklch(78% 0.02 250);
+  --color-accent: oklch(56% 0.16 65);
+  --color-accent-ink: oklch(99% 0 0);
+  --color-accent-soft: oklch(95% 0.04 65);
+  --color-cool: oklch(50% 0.15 240);
+  --color-cool-soft: oklch(95% 0.03 240);
+  --color-ok: oklch(50% 0.15 150);
+  --color-ok-soft: oklch(95% 0.04 150);
+  --color-bad: oklch(55% 0.20 25);
+  --color-bad-soft: oklch(95% 0.04 25);
+  --color-focus: oklch(50% 0.15 240);
+  --color-error: oklch(55% 0.20 25);
+  --color-success: oklch(50% 0.15 150);
+
+  --font-sans: var(--font-geist-sans), "Host Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), "Atkinson Hyperlegible Mono", ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  overflow-x: clip;
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+button:active:not(:disabled), .btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled, input:disabled, select:disabled, textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

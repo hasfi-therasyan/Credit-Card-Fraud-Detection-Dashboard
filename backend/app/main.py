@@ -9,7 +9,7 @@ import os
 import anyio
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from backend.app.audit import log_activity
 from backend.app.db import get_session, init_db
@@ -144,25 +144,71 @@ def summary(
     upload_id: Optional[int] = Query(default=None),
     session: Session = Depends(get_session),
 ) -> dict:
-    stmt = select(TransactionRecord)
-    if upload_id is not None:
-        stmt = stmt.where(TransactionRecord.upload_id == upload_id)
-    txs = session.exec(stmt).all()
-    total = len(txs)
-    fraud = sum(1 for t in txs if t.risk_level == RiskLevel.high)
-    medium = sum(1 for t in txs if t.risk_level == RiskLevel.medium)
-    rate = (fraud / total) if total else 0.0
+    # Use SQL aggregation instead of loading all rows into Python memory.
+    # This handles 500k+ rows in milliseconds instead of timing out.
+    base_filter = (
+        TransactionRecord.upload_id == upload_id if upload_id is not None else True
+    )
 
-    # Estimated prevented losses: proxy = sum(amount) of high risk * 0.9
-    prevented = sum((t.amount or 0.0) for t in txs if t.risk_level == RiskLevel.high) * 0.9
+    total_stmt = select(func.count(TransactionRecord.id)).where(base_filter)
+    total: int = session.exec(total_stmt).one()
+
+    fraud_stmt = select(func.count(TransactionRecord.id)).where(
+        base_filter, TransactionRecord.risk_level == RiskLevel.high
+    )
+    fraud: int = session.exec(fraud_stmt).one()
+
+    medium_stmt = select(func.count(TransactionRecord.id)).where(
+        base_filter, TransactionRecord.risk_level == RiskLevel.medium
+    )
+    medium: int = session.exec(medium_stmt).one()
+
+    prevented_stmt = select(
+        func.coalesce(func.sum(TransactionRecord.amount), 0.0)
+    ).where(base_filter, TransactionRecord.risk_level == RiskLevel.high)
+    prevented_sum: float = session.exec(prevented_stmt).one()
+
+    rate = (fraud / total) if total else 0.0
 
     return {
         "total_transactions": total,
         "total_fraud_detected": fraud,
         "total_medium_risk": medium,
         "fraud_detection_rate": rate,
-        "estimated_prevented_losses": prevented,
+        "estimated_prevented_losses": prevented_sum * 0.9,
     }
+
+
+@app.get("/api/trend")
+def anomaly_trend(
+    upload_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+) -> dict:
+    base_filter = (
+        TransactionRecord.upload_id == upload_id if upload_id is not None else True
+    )
+    stmt = (
+        select(TransactionRecord.id, TransactionRecord.risk_level)
+        .where(
+            base_filter,
+            TransactionRecord.risk_level.in_([RiskLevel.high, RiskLevel.medium]),
+        )
+        .order_by(TransactionRecord.id.asc())
+    )
+    rows = session.exec(stmt).all()
+    ch = 0
+    cm = 0
+    points = []
+    total_anomalies = len(rows)
+    step = max(1, total_anomalies // 60) if total_anomalies else 1
+    for i, r in enumerate(rows):
+        if r.risk_level == RiskLevel.high:
+            ch += 1
+        elif r.risk_level == RiskLevel.medium:
+            cm += 1
+        if i % step == 0 or i == total_anomalies - 1:
+            points.append({"x": i + 1, "high": ch, "medium": cm})
+    return {"total": total_anomalies, "points": points}
 
 
 @app.get("/api/uploads")
@@ -211,20 +257,34 @@ def list_transactions(
     offset: int = Query(default=0, ge=0),
     upload_id: Optional[int] = Query(default=None),
 ) -> dict:
-    stmt = select(TransactionRecord).order_by(TransactionRecord.fraud_probability.desc())
+    # Build the WHERE conditions once, reuse for count and paginated query.
+    conditions = []
     if upload_id is not None:
-        stmt = stmt.where(TransactionRecord.upload_id == upload_id)
+        conditions.append(TransactionRecord.upload_id == upload_id)
     if q:
-        stmt = stmt.where(TransactionRecord.transaction_id.contains(q))
+        conditions.append(TransactionRecord.transaction_id.contains(q))
     if risk:
-        stmt = stmt.where(TransactionRecord.risk_level == RiskLevel(risk))
+        conditions.append(TransactionRecord.risk_level == RiskLevel(risk))
     if min_amount is not None:
-        stmt = stmt.where(TransactionRecord.amount >= min_amount)
+        conditions.append(TransactionRecord.amount >= min_amount)
     if max_amount is not None:
-        stmt = stmt.where(TransactionRecord.amount <= max_amount)
+        conditions.append(TransactionRecord.amount <= max_amount)
 
-    total = len(session.exec(stmt).all())
-    rows = session.exec(stmt.offset(offset).limit(limit)).all()
+    # Count via SQL aggregation (not loading all rows).
+    count_stmt = select(func.count(TransactionRecord.id))
+    if conditions:
+        count_stmt = count_stmt.where(*conditions)
+    total: int = session.exec(count_stmt).one()
+
+    # Paginated data fetch.
+    data_stmt = (
+        select(TransactionRecord)
+        .order_by(TransactionRecord.fraud_probability.desc())
+    )
+    if conditions:
+        data_stmt = data_stmt.where(*conditions)
+    rows = session.exec(data_stmt.offset(offset).limit(limit)).all()
+
     return {
         "total": total,
         "items": [

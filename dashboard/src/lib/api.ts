@@ -44,6 +44,19 @@ export async function fetchSummary(uploadId?: number): Promise<Summary> {
   return res.json();
 }
 
+export type TrendPoint = { x: number; high: number; medium: number };
+
+export async function fetchTrend(uploadId?: number): Promise<{ total: number; points: TrendPoint[] }> {
+  const sp = new URLSearchParams();
+  if (uploadId !== undefined && uploadId !== null) {
+    sp.set("upload_id", String(uploadId));
+  }
+  const url = sp.toString() ? `${API_BASE}/api/trend?${sp.toString()}` : `${API_BASE}/api/trend`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function fetchUploads(): Promise<UploadFileItem[]> {
   const res = await fetch(`${API_BASE}/api/uploads`, { cache: "no-store" });
   if (!res.ok) throw new Error(await res.text());
